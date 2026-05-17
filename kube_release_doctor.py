@@ -385,7 +385,12 @@ def infer_root_causes(
     return unique_preserve_order(causes)
 
 
-def suggest_fixes(root_causes: List[str], config_checks: List[Dict[str, str]], current_healthy: bool) -> List[str]:
+def suggest_fixes(
+    root_causes: List[str],
+    config_checks: List[Dict[str, str]],
+    current_healthy: bool,
+    namespace: str,
+) -> List[str]:
     if current_healthy:
         return [
             "No immediate fix required. Historical warnings can be reviewed with kubectl describe pod if needed."
@@ -393,9 +398,30 @@ def suggest_fixes(root_causes: List[str], config_checks: List[Dict[str, str]], c
 
     fixes: List[str] = []
     text = "\n".join(root_causes)
+    missing_refs = [item for item in config_checks if item["status"] != "Found"]
 
-    if "Secret or ConfigMap" in text or any(item["status"] != "Found" for item in config_checks):
+    if "Secret or ConfigMap" in text or missing_refs:
         fixes.append("Create the missing Secret/ConfigMap or fix the Deployment env/envFrom reference names and keys.")
+        fixes.append("Replace `<KEY>` and `<VALUE>` with the real data required by the application before running these commands.")
+        for item in missing_refs:
+            if item["kind"] == "secret":
+                fixes.append(
+                    "Example command for missing Secret `{name}`:\n\n"
+                    "```bash\n"
+                    "kubectl create secret generic {name} \\\n"
+                    "  --from-literal=<KEY>=<VALUE> \\\n"
+                    "  -n {namespace}\n"
+                    "```".format(name=item["name"], namespace=namespace)
+                )
+            elif item["kind"] == "configmap":
+                fixes.append(
+                    "Example command for missing ConfigMap `{name}`:\n\n"
+                    "```bash\n"
+                    "kubectl create configmap {name} \\\n"
+                    "  --from-literal=<KEY>=<VALUE> \\\n"
+                    "  -n {namespace}\n"
+                    "```".format(name=item["name"], namespace=namespace)
+                )
     if "image cannot be pulled" in text:
         fixes.append("Verify image repository, tag, imagePullSecrets, registry permissions, and node network access to the registry.")
     if "repeatedly crashing" in text:
@@ -589,7 +615,10 @@ def build_report(
 
     lines.extend(["", "## Suggested Fix", ""])
     for fix in suggested_fixes:
-        lines.append(f"- {fix}")
+        if "\n" in fix:
+            lines.extend(["", fix])
+        else:
+            lines.append(f"- {fix}")
 
     lines.append("")
     return "\n".join(lines)
@@ -633,7 +662,7 @@ def collect_diagnostics(namespace: str, deployment_name: str, output_path: str) 
     current_healthy = is_currently_healthy(deployment_summary, pod_summaries, parsed_pod_error, config_checks)
     event_analyses = analyze_events(namespace, pod_summaries, include_healthy_pods=current_healthy)
     root_causes = infer_root_causes(deployment_summary, pod_summaries, config_checks, event_analyses, current_healthy)
-    suggested_fixes = suggest_fixes(root_causes, config_checks, current_healthy)
+    suggested_fixes = suggest_fixes(root_causes, config_checks, current_healthy, namespace)
 
     return build_report(
         namespace=namespace,
