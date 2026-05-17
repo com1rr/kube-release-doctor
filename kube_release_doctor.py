@@ -38,10 +38,17 @@ EVENT_ERROR_KEYWORDS = [
     "Warning",
 ]
 
-HEALTHY = "健康"
-WARNING = "警告"
-CRITICAL = "严重"
-UNKNOWN = "未知"
+HEALTHY = "Healthy"
+WARNING = "Warning"
+CRITICAL = "Critical"
+UNKNOWN = "Unknown"
+
+HEALTH_LEVEL_LABELS = {
+    HEALTHY: "\u5065\u5eb7\uff08Healthy\uff09",
+    WARNING: "\u8b66\u544a\uff08Warning\uff09",
+    CRITICAL: "\u4e25\u91cd\u5f02\u5e38\uff08Critical\uff09",
+    UNKNOWN: "\u672a\u77e5\uff08Unknown\uff09",
+}
 
 
 @dataclass
@@ -86,7 +93,7 @@ def run_kubectl(args: Sequence[str], timeout: int = 30) -> CommandResult:
             command=command,
             returncode=124,
             stdout=stdout.strip() if isinstance(stdout, str) else "",
-            stderr=(stderr.strip() if isinstance(stderr, str) else "") or "kubectl command timed out",
+            stderr=(stderr.strip() if isinstance(stderr, str) else "") or "kubectl \u547d\u4ee4\u6267\u884c\u8d85\u65f6\u3002",
         )
     except Exception as exc:
         return CommandResult(command=command, returncode=1, stdout="", stderr=str(exc))
@@ -115,7 +122,7 @@ def run_preflight_checks(namespace: str) -> Tuple[List[Dict[str, str]], bool]:
                 "name": "kubectl binary",
                 "status": "Failed",
                 "command": "shutil.which('kubectl')",
-                "detail": "kubectl was not found in PATH. Install kubectl or add it to PATH.",
+                "detail": "\u672a\u5728 PATH \u4e2d\u627e\u5230 kubectl\u3002\u8bf7\u5b89\u88c5 kubectl\uff0c\u6216\u5c06 kubectl \u52a0\u5165 PATH\u3002",
             }
         )
         return checks, False
@@ -126,7 +133,7 @@ def run_preflight_checks(namespace: str) -> Tuple[List[Dict[str, str]], bool]:
             "name": "kubectl client version",
             "status": "OK" if version_result.ok else "Failed",
             "command": version_result.command_text,
-            "detail": version_result.stdout or version_result.stderr or "No output",
+            "detail": version_result.stdout or version_result.stderr or "\u65e0\u8f93\u51fa\uff08No output\uff09",
         }
     )
 
@@ -136,7 +143,7 @@ def run_preflight_checks(namespace: str) -> Tuple[List[Dict[str, str]], bool]:
             "name": "cluster namespace access",
             "status": "OK" if namespace_result.ok else "Failed",
             "command": namespace_result.command_text,
-            "detail": namespace_result.stdout or namespace_result.stderr or "No output",
+            "detail": namespace_result.stdout or namespace_result.stderr or "\u65e0\u8f93\u51fa\uff08No output\uff09",
         }
     )
 
@@ -145,11 +152,11 @@ def run_preflight_checks(namespace: str) -> Tuple[List[Dict[str, str]], bool]:
 
 def parse_json_result(result: CommandResult) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if not result.ok:
-        return None, result.stderr or "kubectl command failed"
+        return None, result.stderr or "kubectl \u547d\u4ee4\u6267\u884c\u5931\u8d25\u3002"
     try:
         return json.loads(result.stdout), None
     except json.JSONDecodeError as exc:
-        return None, f"Failed to parse kubectl JSON output: {exc}"
+        return None, f"\u89e3\u6790 kubectl JSON \u8f93\u51fa\u5931\u8d25: {exc}"
 
 
 def get_nested(data: Dict[str, Any], path: Sequence[str], default: Any = None) -> Any:
@@ -220,7 +227,7 @@ def check_config_refs(namespace: str, refs: Iterable[Tuple[str, str]]) -> List[D
                 "kind": kind,
                 "name": name,
                 "status": "Found" if result.ok else "Missing or inaccessible",
-                "error": "" if result.ok else (result.stderr or "kubectl command failed"),
+                "error": "" if result.ok else (result.stderr or "kubectl \u547d\u4ee4\u6267\u884c\u5931\u8d25\u3002"),
                 "command": result.command_text,
             }
         )
@@ -229,7 +236,7 @@ def check_config_refs(namespace: str, refs: Iterable[Tuple[str, str]]) -> List[D
 
 def summarize_deployment(deployment: Optional[Dict[str, Any]], error: Optional[str]) -> Dict[str, Any]:
     if not deployment:
-        return {"error": error or "Deployment data unavailable"}
+        return {"error": error or "Deployment \u6570\u636e\u4e0d\u53ef\u7528\u3002"}
 
     spec = deployment.get("spec") or {}
     status = deployment.get("status") or {}
@@ -298,7 +305,7 @@ def analyze_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_pod_summaries(pods_data: Optional[Dict[str, Any]], error: Optional[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     if not pods_data:
-        return [], error or "Pod data unavailable"
+        return [], error or "Pod \u6570\u636e\u4e0d\u53ef\u7528\u3002"
     pods = pods_data.get("items", []) or []
     return [analyze_pod(pod) for pod in pods], None
 
@@ -320,7 +327,7 @@ def analyze_services(
     }
 
     if not analysis["ok"] or not services_data:
-        analysis["warning"] = "Service check could not be completed."
+        analysis["warning"] = "Service \u68c0\u67e5\u672a\u80fd\u5b8c\u6210\u3002"
         return analysis
 
     deployment_labels = get_nested(deployment or {}, ["spec", "template", "metadata", "labels"], {}) or {}
@@ -345,7 +352,7 @@ def analyze_services(
             analysis["unmatched"].append(service_info)
 
     if not analysis["matched"] and pod_names:
-        analysis["warning"] = "No Service selector matches the current Deployment pod template labels."
+        analysis["warning"] = "\u672a\u627e\u5230 selector \u80fd\u5339\u914d\u5f53\u524d Deployment Pod template labels \u7684 Service\u3002"
 
     return analysis
 
@@ -362,7 +369,7 @@ def collect_recent_logs(namespace: str, pod_summaries: List[Dict[str, Any]]) -> 
                 "command": result.command_text,
                 "ok": result.ok,
                 "log": result.stdout,
-                "error": "" if result.ok else (result.stderr or "kubectl logs failed"),
+                "error": "" if result.ok else (result.stderr or "kubectl logs \u6267\u884c\u5931\u8d25\u3002"),
             }
         )
     return logs
@@ -434,6 +441,48 @@ def has_restart_warnings(pod_summaries: List[Dict[str, Any]]) -> bool:
     return any(pod.get("warnings") for pod in pod_summaries)
 
 
+def format_health_level(health_level: str) -> str:
+    return HEALTH_LEVEL_LABELS.get(health_level, f"{health_level}\uff08{health_level}\uff09")
+
+
+def describe_current_status(
+    health_level: str,
+    pod_summaries: List[Dict[str, Any]],
+    event_analyses: List[Dict[str, Any]],
+    service_analysis: Dict[str, Any],
+) -> List[str]:
+    historical_events = any(analysis.get("error_lines") for analysis in event_analyses)
+    restart_warnings = has_restart_warnings(pod_summaries)
+    service_warning = bool(service_analysis.get("warning"))
+
+    if health_level == HEALTHY:
+        return [
+            "\u5f53\u524d\u8d44\u6e90\u5b8c\u5168\u6b63\u5e38\uff0c\u672a\u53d1\u73b0\u660e\u663e\u5386\u53f2\u544a\u8b66\u3002",
+        ]
+
+    if health_level == WARNING:
+        messages = [
+            "\u5f53\u524d\u53d1\u5e03\u8d44\u6e90\u662f\u5065\u5eb7\u7684\uff0c\u4f46\u5b58\u5728\u9700\u8981\u5173\u6ce8\u7684\u544a\u8b66\u4fe1\u53f7\u3002",
+        ]
+        if historical_events:
+            messages.append("\u5f53\u524d\u53d1\u5e03\u662f\u5065\u5eb7\u7684\uff0c\u4f46\u53d1\u73b0\u5386\u53f2 Events \u544a\u8b66\u3002")
+        if restart_warnings:
+            messages.append("\u4e00\u4e2a\u6216\u591a\u4e2a container \u7684 RestartCount > 0\uff0c\u4f46\u5f53\u524d\u5904\u4e8e Ready \u72b6\u6001\u3002")
+        if service_warning:
+            messages.append(str(service_analysis["warning"]))
+        return unique_preserve_order(messages)
+
+    if health_level == CRITICAL:
+        return [
+            "\u68c0\u6d4b\u5230\u660e\u786e\u7684\u5f53\u524d\u53d1\u5e03\u6545\u969c\u3002",
+            "\u8bf7\u91cd\u70b9\u68c0\u67e5 rollout \u72b6\u6001\u3001Pod \u72b6\u6001\u3001\u955c\u50cf\u62c9\u53d6\u72b6\u6001\uff0c\u4ee5\u53ca Secret / ConfigMap \u5f15\u7528\u3002",
+        ]
+
+    return [
+        "\u65e0\u6cd5\u5224\u65ad\u5f53\u524d\u53d1\u5e03\u72b6\u6001\uff0c\u901a\u5e38\u662f\u56e0\u4e3a kubectl \u4e0d\u53ef\u7528\u3001\u96c6\u7fa4\u4e0d\u53ef\u8fbe\u3001\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u6743\u9650\u4e0d\u8db3\u3002",
+    ]
+
+
 def evaluate_health_level(
     preflight_ok: bool,
     deployment_summary: Dict[str, Any],
@@ -491,7 +540,7 @@ def analyze_events(namespace: str, pod_summaries: List[Dict[str, Any]], include_
                 "pod": pod["name"],
                 "command": result.command_text,
                 "ok": result.ok,
-                "error": "" if result.ok else (result.stderr or "kubectl command failed"),
+                "error": "" if result.ok else (result.stderr or "kubectl \u547d\u4ee4\u6267\u884c\u5931\u8d25\u3002"),
                 "events": events_text,
                 "error_lines": extract_error_event_lines(events_text),
             }
@@ -510,7 +559,7 @@ def infer_root_causes(
     causes: List[str] = []
 
     if health_level == UNKNOWN:
-        causes.append("Unable to determine current release health because kubectl access or required resources are unavailable.")
+        causes.append("\u65e0\u6cd5\u5224\u65ad\u5f53\u524d\u53d1\u5e03\u72b6\u6001\uff1akubectl \u4e0d\u53ef\u7528\u3001\u96c6\u7fa4\u4e0d\u53ef\u8fbe\u3001\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u6743\u9650\u4e0d\u8db3\u3002")
         return causes
 
     if health_level in {HEALTHY, WARNING}:
@@ -519,64 +568,64 @@ def infer_root_causes(
         service_warning = service_analysis.get("warning")
         if health_level == WARNING:
             causes.append(
-                "No current release failure detected. Current resources are healthy, but warnings were found."
+                "\u672a\u68c0\u6d4b\u5230\u5f53\u524d\u53d1\u5e03\u5931\u8d25\uff1b\u5f53\u524d\u8d44\u6e90\u5065\u5eb7\uff0c\u4f46\u5b58\u5728\u9700\u8981\u5173\u6ce8\u7684\u544a\u8b66\u4fe1\u53f7\u3002"
             )
             if historical_warnings_found:
-                causes.append("Historical warning events were found, but current resources are healthy.")
+                causes.append("\u53d1\u73b0\u5386\u53f2 Events \u544a\u8b66\uff0c\u4f46\u5f53\u524d Deployment / Pod / Secret / ConfigMap \u72b6\u6001\u5065\u5eb7\u3002")
             if restart_warnings_found:
-                causes.append("One or more containers have restartCount > 0 but are currently ready.")
+                causes.append("\u4e00\u4e2a\u6216\u591a\u4e2a container \u7684 RestartCount > 0\uff0c\u4f46\u5f53\u524d\u5904\u4e8e Ready \u72b6\u6001\u3002")
             if service_warning:
                 causes.append(str(service_warning))
         else:
-            causes.append("No current release failure detected. Current resources are healthy.")
+            causes.append("\u672a\u68c0\u6d4b\u5230\u5f53\u524d\u53d1\u5e03\u6545\u969c\uff1b\u5f53\u524d\u8d44\u6e90\u72b6\u6001\u5065\u5eb7\u3002")
         return causes
 
     if deployment_summary.get("error"):
-        causes.append("Deployment information could not be collected. Check namespace, deployment name, and kubectl access.")
+        causes.append("\u65e0\u6cd5\u91c7\u96c6 Deployment \u4fe1\u606f\uff0c\u8bf7\u68c0\u67e5 namespace\u3001Deployment \u540d\u79f0\u548c kubectl \u8bbf\u95ee\u6743\u9650\u3002")
 
     replicas = deployment_summary.get("replicas")
     available = deployment_summary.get("availableReplicas")
     updated = deployment_summary.get("updatedReplicas")
     if isinstance(replicas, int) and replicas > 0:
         if not isinstance(available, int) or available < replicas:
-            causes.append("Deployment does not have all desired replicas available.")
+            causes.append("Deployment availableReplicas \u5c0f\u4e8e desiredReplicas\uff0crollout \u672a\u8fbe\u5230\u671f\u671b\u72b6\u6001\u3002")
         if not isinstance(updated, int) or updated < replicas:
-            causes.append("Deployment rollout may be incomplete because updatedReplicas is lower than desired replicas.")
+            causes.append("Deployment updatedReplicas \u5c0f\u4e8e desiredReplicas\uff0crollout \u53ef\u80fd\u672a\u5b8c\u6210\u3002")
 
     missing_refs = [item for item in config_checks if item["status"] != "Found"]
     if missing_refs:
         names = ", ".join(f"{item['kind']}/{item['name']}" for item in missing_refs)
-        causes.append(f"Referenced Secret or ConfigMap is missing or inaccessible: {names}.")
+        causes.append(f"Deployment \u5f15\u7528\u7684 Secret / ConfigMap \u7f3a\u5931\u6216\u65e0\u6743\u8bbf\u95ee: {names}\u3002")
 
     reasons: Set[str] = set()
     for pod in pod_summaries:
         reasons.update(pod.get("problems", []))
 
     if "ImagePullBackOff" in reasons or "ErrImagePull" in reasons:
-        causes.append("Container image cannot be pulled. Image name, tag, registry credentials, or network access may be wrong.")
+        causes.append("\u5b58\u5728 ImagePullBackOff / ErrImagePull\uff0c\u53ef\u80fd\u662f\u955c\u50cf\u540d\u79f0\u3001tag\u3001registry \u51ed\u636e\u6216\u7f51\u7edc\u8bbf\u95ee\u5f02\u5e38\u3002")
     if "CrashLoopBackOff" in reasons:
-        causes.append("A container is repeatedly crashing after startup. Application command, config, or dependency readiness may be wrong.")
+        causes.append("\u5b58\u5728 CrashLoopBackOff\uff0ccontainer \u542f\u52a8\u540e\u53cd\u590d\u5d29\u6e83\uff0c\u53ef\u80fd\u4e0e\u542f\u52a8\u547d\u4ee4\u3001\u914d\u7f6e\u6216\u4f9d\u8d56\u672a\u5c31\u7eea\u6709\u5173\u3002")
     if "CreateContainerConfigError" in reasons:
-        causes.append("Container configuration is invalid, often because referenced Secret or ConfigMap keys are missing.")
+        causes.append("\u5b58\u5728 CreateContainerConfigError\uff0c\u5e38\u89c1\u539f\u56e0\u662f secretKeyRef / configMapKeyRef / envFrom \u5f15\u7528\u7684 Secret\u3001ConfigMap \u6216 key \u7f3a\u5931\u3002")
     if "Pending" in reasons:
-        causes.append("Pod is Pending. Scheduling, resource quota, node capacity, PVC, or image pull prerequisites may be blocking it.")
+        causes.append("\u5b58\u5728 Pending Pod\uff0c\u53ef\u80fd\u662f\u8c03\u5ea6\u3001\u8d44\u6e90\u914d\u989d\u3001\u8282\u70b9\u5bb9\u91cf\u3001PVC \u6216\u955c\u50cf\u62c9\u53d6\u524d\u7f6e\u6761\u4ef6\u963b\u585e\u3002")
     if "ContainerCreating" in reasons:
-        causes.append("Pod is stuck in ContainerCreating. Volume mount, image pull, CNI, or node runtime issues may be involved.")
+        causes.append("Pod \u5904\u4e8e ContainerCreating\uff0c\u53ef\u80fd\u4e0e volume mount\u3001image pull\u3001CNI \u6216\u8282\u70b9 runtime \u6709\u5173\u3002")
 
     for analysis in event_analyses:
         for line in analysis.get("error_lines", []):
             if "FailedScheduling" in line:
-                causes.append("Scheduler reported FailedScheduling events.")
+                causes.append("Events \u4e2d\u51fa\u73b0 FailedScheduling\uff0c\u8bf4\u660e scheduler \u672a\u80fd\u6210\u529f\u8c03\u5ea6 Pod\u3002")
             if "FailedMount" in line:
-                causes.append("Pod volume mount failed.")
+                causes.append("Events \u4e2d\u51fa\u73b0 FailedMount\uff0c\u8bf4\u660e Pod volume mount \u5931\u8d25\u3002")
             if "Unhealthy" in line:
-                causes.append("Readiness or liveness probe is failing.")
+                causes.append("Events \u4e2d\u51fa\u73b0 Unhealthy\uff0c\u53ef\u80fd\u662f readiness / liveness probe \u5931\u8d25\u3002")
 
     if service_analysis.get("warning"):
         causes.append(str(service_analysis["warning"]))
 
     if not causes:
-        causes.append("No obvious root cause detected from the collected Deployment, Pod, Secret, ConfigMap, and Event data.")
+        causes.append("\u57fa\u4e8e\u5df2\u91c7\u96c6\u7684 Deployment\u3001Pod\u3001Secret\u3001ConfigMap \u548c Events \u4fe1\u606f\uff0c\u6682\u672a\u53d1\u73b0\u660e\u786e\u6839\u56e0\u3002")
 
     return unique_preserve_order(causes)
 
@@ -589,15 +638,15 @@ def suggest_fixes(
 ) -> List[str]:
     if health_level == HEALTHY:
         return [
-            "No immediate fix required."
+            "\u5f53\u524d\u65e0\u9700\u7acb\u5373\u4fee\u590d\u3002Deployment\u3001Pod\u3001Secret\u3001ConfigMap \u548c Service \u68c0\u67e5\u672a\u53d1\u73b0\u5f53\u524d\u6545\u969c\u3002"
         ]
     if health_level == WARNING:
         return [
-            "No immediate fix required. Historical warnings, restart counts, and Service selector coverage can be reviewed if needed."
+            "\u5f53\u524d\u65e0\u9700\u7acb\u5373\u4fee\u590d\u3002\u53ef\u6839\u636e\u9700\u8981\u590d\u6838\u5386\u53f2 Events\u3001RestartCount \u6216 Service selector \u5339\u914d\u60c5\u51b5\u3002"
         ]
     if health_level == UNKNOWN:
         return [
-            "Verify kubectl is installed, kubeconfig points to the correct cluster, and the namespace/deployment exists."
+            "\u8bf7\u68c0\u67e5 kubectl \u662f\u5426\u5df2\u5b89\u88c5\u3001kubeconfig \u662f\u5426\u6307\u5411\u6b63\u786e\u96c6\u7fa4\uff0c\u5e76\u786e\u8ba4 namespace / Deployment \u5b58\u5728\u4e14\u5f53\u524d\u7528\u6237\u5177\u5907\u8bfb\u53d6\u6743\u9650\u3002"
         ]
 
     fixes: List[str] = []
@@ -605,12 +654,12 @@ def suggest_fixes(
     missing_refs = [item for item in config_checks if item["status"] != "Found"]
 
     if "Secret or ConfigMap" in text or missing_refs:
-        fixes.append("Create the missing Secret/ConfigMap or fix the Deployment env/envFrom reference names and keys.")
-        fixes.append("Replace `<KEY>` and `<VALUE>` with the real data required by the application before running these commands.")
+        fixes.append("\u521b\u5efa\u7f3a\u5931\u7684 Secret / ConfigMap\uff0c\u6216\u4fee\u6b63 Deployment \u4e2d env / envFrom \u5f15\u7528\u7684\u540d\u79f0\u548c key\u3002")
+        fixes.append("\u4ee5\u4e0b\u547d\u4ee4\u4e2d `<KEY>` \u548c `<VALUE>` \u662f\u5360\u4f4d\u7b26\uff0c\u6267\u884c\u524d\u8bf7\u66ff\u6362\u4e3a\u5e94\u7528\u771f\u5b9e\u9700\u8981\u7684\u914d\u7f6e\u503c\u3002")
         for item in missing_refs:
             if item["kind"] == "secret":
                 fixes.append(
-                    "Example command for missing Secret `{name}`:\n\n"
+                    "\u7f3a\u5931 Secret `{name}` \u7684\u4fee\u590d\u547d\u4ee4\u793a\u4f8b:\n\n"
                     "```bash\n"
                     "kubectl create secret generic {name} \\\n"
                     "  --from-literal=<KEY>=<VALUE> \\\n"
@@ -619,26 +668,26 @@ def suggest_fixes(
                 )
             elif item["kind"] == "configmap":
                 fixes.append(
-                    "Example command for missing ConfigMap `{name}`:\n\n"
+                    "\u7f3a\u5931 ConfigMap `{name}` \u7684\u4fee\u590d\u547d\u4ee4\u793a\u4f8b:\n\n"
                     "```bash\n"
                     "kubectl create configmap {name} \\\n"
                     "  --from-literal=<KEY>=<VALUE> \\\n"
                     "  -n {namespace}\n"
                     "```".format(name=item["name"], namespace=namespace)
                 )
-    if "image cannot be pulled" in text:
-        fixes.append("Verify image repository, tag, imagePullSecrets, registry permissions, and node network access to the registry.")
-    if "repeatedly crashing" in text:
-        fixes.append("Check container logs, startup command, application config, database/service dependencies, and resource limits.")
+    if "ImagePullBackOff" in text or "ErrImagePull" in text:
+        fixes.append("\u68c0\u67e5\u955c\u50cf\u4ed3\u5e93\u3001tag\u3001imagePullSecrets\u3001\u955c\u50cf\u4ed3\u5e93\u6743\u9650\uff0c\u4ee5\u53ca\u8282\u70b9\u5230\u955c\u50cf\u4ed3\u5e93\u7684\u7f51\u7edc\u8fde\u901a\u6027\u3002")
+    if "CrashLoopBackOff" in text:
+        fixes.append("\u67e5\u770b container logs\uff0c\u68c0\u67e5\u542f\u52a8\u547d\u4ee4\u3001\u5e94\u7528\u914d\u7f6e\u3001\u6570\u636e\u5e93 / Service \u4f9d\u8d56\u548c\u8d44\u6e90\u9650\u5236\u3002")
     if "FailedScheduling" in text or "Pending" in text:
-        fixes.append("Check node capacity, taints/tolerations, affinity rules, resource requests, PVC status, and namespace quota.")
-    if "ContainerCreating" in text or "volume mount failed" in text:
-        fixes.append("Inspect volume mounts, PVC/PV binding, CSI driver health, CNI status, and kubelet events on the target node.")
-    if "probe is failing" in text:
-        fixes.append("Review readiness/liveness probe path, port, timeout, initialDelaySeconds, and application health endpoint behavior.")
+        fixes.append("\u68c0\u67e5\u8282\u70b9\u8d44\u6e90\u3001taints / tolerations\u3001affinity\u3001resource requests\u3001PVC \u72b6\u6001\u548c namespace quota\u3002")
+    if "ContainerCreating" in text or "FailedMount" in text:
+        fixes.append("\u68c0\u67e5 volume mounts\u3001PVC / PV \u7ed1\u5b9a\u3001CSI driver\u3001CNI \u72b6\u6001\uff0c\u4ee5\u53ca\u76ee\u6807\u8282\u70b9\u4e0a\u7684 kubelet events\u3002")
+    if "Unhealthy" in text:
+        fixes.append("\u590d\u6838 readiness / liveness probe \u7684 path\u3001port\u3001timeout\u3001initialDelaySeconds\uff0c\u4ee5\u53ca\u5e94\u7528\u5065\u5eb7\u68c0\u67e5\u63a5\u53e3\u884c\u4e3a\u3002")
 
     if not fixes:
-        fixes.append("Run kubectl rollout status, kubectl describe deployment, kubectl describe pod, and kubectl logs for deeper inspection.")
+        fixes.append("\u53ef\u7ee7\u7eed\u6267\u884c kubectl rollout status\u3001kubectl describe deployment\u3001kubectl describe pod \u548c kubectl logs \u505a\u8fdb\u4e00\u6b65\u6392\u67e5\u3002")
 
     return unique_preserve_order(fixes)
 
@@ -658,10 +707,35 @@ def md_escape(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def format_preflight_status(status: str) -> str:
+    if status == "OK":
+        return "\u901a\u8fc7\uff08OK\uff09"
+    if status == "Failed":
+        return "\u5931\u8d25\uff08Failed\uff09"
+    return status
+
+
+def format_preflight_name(name: str) -> str:
+    names = {
+        "kubectl binary": "kubectl \u53ef\u6267\u884c\u6587\u4ef6",
+        "kubectl client version": "kubectl \u5ba2\u6237\u7aef\u7248\u672c",
+        "cluster namespace access": "\u96c6\u7fa4 namespace \u8bbf\u95ee",
+    }
+    return names.get(name, name)
+
+
+def format_config_status(status: str) -> str:
+    if status == "Found":
+        return "\u5b58\u5728\uff08Found\uff09"
+    if status == "Missing or inaccessible":
+        return "\u7f3a\u5931\u6216\u65e0\u6743\u8bbf\u95ee\uff08Missing or inaccessible\uff09"
+    return status
+
+
 def format_conditions(conditions: List[Dict[str, Any]]) -> str:
     if not conditions:
-        return "_No conditions reported._"
-    lines = ["| Type | Status | Reason | Message |", "| --- | --- | --- | --- |"]
+        return "_\u672a\u8fd4\u56de Conditions\u3002_"
+    lines = ["| \u7c7b\u578b\uff08Type\uff09 | \u72b6\u6001\uff08Status\uff09 | \u539f\u56e0\uff08Reason\uff09 | \u6d88\u606f\uff08Message\uff09 |", "| --- | --- | --- | --- |"]
     for condition in conditions:
         lines.append(
             "| {type} | {status} | {reason} | {message} |".format(
@@ -672,6 +746,37 @@ def format_conditions(conditions: List[Dict[str, Any]]) -> str:
             )
         )
     return "\n".join(lines)
+
+
+def build_diagnosis_summary(
+    health_level: str,
+    deployment_summary: Dict[str, Any],
+    pod_summaries: List[Dict[str, Any]],
+    service_analysis: Dict[str, Any],
+    config_checks: List[Dict[str, str]],
+    event_analyses: List[Dict[str, Any]],
+    recent_logs: List[Dict[str, Any]],
+) -> List[str]:
+    abnormal_pods = [pod for pod in pod_summaries if pod.get("is_abnormal")]
+    restart_warning_count = sum(1 for pod in pod_summaries if pod.get("warnings"))
+    missing_refs = [item for item in config_checks if item["status"] != "Found"]
+    event_error_count = sum(len(analysis.get("error_lines", [])) for analysis in event_analyses)
+    event_error_label = "\u5386\u53f2\u544a\u8b66 Events \u6570" if health_level in {HEALTHY, WARNING} else "\u5f53\u524d\u6545\u969c Events \u6570"
+    matched_services = service_analysis.get("matched", []) or []
+
+    lines = [
+        f"- \u6574\u4f53\u72b6\u6001\uff1a{format_health_level(health_level)}",
+        f"- Deployment desiredReplicas: `{deployment_summary.get('replicas', 'N/A')}`",
+        f"- Deployment availableReplicas: `{deployment_summary.get('availableReplicas', 'N/A')}`",
+        f"- Deployment updatedReplicas: `{deployment_summary.get('updatedReplicas', 'N/A')}`",
+        f"- Pod \u603b\u6570: `{len(pod_summaries)}`\uff0c\u5f02\u5e38 Pod: `{len(abnormal_pods)}`",
+        f"- Service \u5339\u914d\u6570: `{len(matched_services)}`",
+        f"- Secret / ConfigMap \u7f3a\u5931\u6570: `{len(missing_refs)}`",
+        f"- {event_error_label}: `{event_error_count}`",
+        f"- RestartCount \u544a\u8b66 Pod \u6570: `{restart_warning_count}`",
+        f"- \u5df2\u5c1d\u8bd5\u91c7\u96c6\u6700\u8fd1\u65e5\u5fd7 Pod \u6570: `{len(recent_logs)}`",
+    ]
+    return lines
 
 
 def build_report(
@@ -695,16 +800,16 @@ def build_report(
 ) -> str:
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: List[str] = [
-        "# Kube Release Doctor Report",
+        "# Kube Release Doctor \u8bca\u65ad\u62a5\u544a",
         "",
-        "## Basic Info",
+        "## \u57fa\u672c\u4fe1\u606f",
         "",
         f"- Namespace: `{namespace}`",
         f"- Deployment: `{deployment_name}`",
-        f"- Generated At: `{now}`",
-        f"- Output: `{output_path}`",
+        f"- \u751f\u6210\u65f6\u95f4: `{now}`",
+        f"- \u62a5\u544a\u8def\u5f84: `{output_path}`",
         "",
-        "### Commands",
+        "### kubectl \u547d\u4ee4",
         "",
         f"- `{deployment_result.command_text}`",
     ]
@@ -712,43 +817,48 @@ def build_report(
     if pod_result:
         lines.append(f"- `{pod_result.command_text}`")
     if not deployment_result.ok:
-        lines.extend(["", f"> Deployment command failed: `{deployment_result.stderr or 'unknown error'}`"])
+        lines.extend(["", f"> Deployment \u547d\u4ee4\u6267\u884c\u5931\u8d25: `{deployment_result.stderr or 'unknown error'}`"])
     if pod_result and not pod_result.ok:
-        lines.extend(["", f"> Pod command failed: `{pod_result.stderr or 'unknown error'}`"])
+        lines.extend(["", f"> Pod \u547d\u4ee4\u6267\u884c\u5931\u8d25: `{pod_result.stderr or 'unknown error'}`"])
 
-    lines.extend(["", "## Preflight Check", ""])
-    lines.extend(["| Check | Status | Command | Detail |", "| --- | --- | --- | --- |"])
+    lines.extend(["", "## \u73af\u5883\u9884\u68c0", ""])
+    lines.extend(["| \u68c0\u67e5\u9879 | \u72b6\u6001 | \u547d\u4ee4 | \u8be6\u60c5 |", "| --- | --- | --- | --- |"])
     for check in preflight_checks:
         lines.append(
             "| {name} | {status} | `{command}` | {detail} |".format(
-                name=md_escape(check.get("name", "")),
-                status=md_escape(check.get("status", "")),
+                name=md_escape(format_preflight_name(check.get("name", ""))),
+                status=md_escape(format_preflight_status(check.get("status", ""))),
                 command=md_escape(check.get("command", "")),
                 detail=md_escape(check.get("detail", "")),
             )
         )
 
-    lines.extend(["", "## Current Status", ""])
-    lines.append(f"- 健康等级: `{health_level}`")
-    if health_level == HEALTHY:
-        lines.append("- Current resources are healthy.")
-    elif health_level == WARNING:
-        lines.append("- Current core resources are healthy, but warnings require review.")
-    elif health_level == CRITICAL:
-        lines.append("- Current release failure signals were detected.")
-    else:
-        lines.append("- Health could not be determined because kubectl access or required resources are unavailable.")
+    lines.extend(["", "## \u5f53\u524d\u72b6\u6001", ""])
+    lines.append(f"- \u6574\u4f53\u72b6\u6001\uff1a{format_health_level(health_level)}")
+    for message in describe_current_status(health_level, pod_summaries, event_analyses, service_analysis):
+        lines.append(f"- {message}")
 
-    lines.extend(["", "## Deployment Status", ""])
+    lines.extend(["", "## \u8bca\u65ad\u6458\u8981", ""])
+    lines.extend(build_diagnosis_summary(
+        health_level,
+        deployment_summary,
+        pod_summaries,
+        service_analysis,
+        config_checks,
+        event_analyses,
+        recent_logs,
+    ))
+
+    lines.extend(["", "## Deployment \u72b6\u6001", ""])
     if deployment_summary.get("error"):
-        lines.append(f"- Error: `{deployment_summary['error']}`")
+        lines.append(f"- \u9519\u8bef: `{deployment_summary['error']}`")
     else:
         lines.extend(
             [
-                f"- Desired Replicas: `{deployment_summary.get('replicas', 0)}`",
-                f"- Available Replicas: `{deployment_summary.get('availableReplicas', 0)}`",
-                f"- Updated Replicas: `{deployment_summary.get('updatedReplicas', 0)}`",
-                f"- Ready Replicas: `{deployment_summary.get('readyReplicas', 0)}`",
+                f"- desiredReplicas: `{deployment_summary.get('replicas', 0)}`",
+                f"- availableReplicas: `{deployment_summary.get('availableReplicas', 0)}`",
+                f"- updatedReplicas: `{deployment_summary.get('updatedReplicas', 0)}`",
+                f"- readyReplicas: `{deployment_summary.get('readyReplicas', 0)}`",
                 f"- Pod Selector: `{selector or 'N/A'}`",
                 "",
                 "### Conditions",
@@ -757,15 +867,15 @@ def build_report(
             ]
         )
 
-    lines.extend(["", "## Pod Status", ""])
+    lines.extend(["", "## Pod \u72b6\u6001", ""])
     if pod_error:
-        lines.append(f"- Error: `{pod_error}`")
+        lines.append(f"- \u9519\u8bef: `{pod_error}`")
     elif not pod_summaries:
-        lines.append("_No Pods found for the Deployment selector._")
+        lines.append("_\u672a\u627e\u5230\u5339\u914d Deployment selector \u7684 Pod\u3002_")
     else:
         lines.extend(
             [
-                "| Pod | Phase | Container | Ready | Restarts | Waiting Reason | Problems | Warnings |",
+                "| Pod | Phase | Container | Ready | \u91cd\u542f\u6b21\u6570\uff08Restarts\uff09 | \u7b49\u5f85\u539f\u56e0\uff08Waiting Reason\uff09 | \u95ee\u9898\uff08Problems\uff09 | \u544a\u8b66\uff08Warnings\uff09 |",
                 "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
@@ -788,21 +898,27 @@ def build_report(
                     )
                 )
 
-    lines.extend(["", "## Service Check", ""])
-    lines.append(f"- Command: `{service_analysis.get('command', 'N/A')}`")
+    lines.extend(["", "## Service \u68c0\u67e5", ""])
+    lines.append(f"- \u547d\u4ee4: `{service_analysis.get('command', 'N/A')}`")
     if not service_analysis.get("ok"):
-        lines.append(f"- Error: `{service_analysis.get('error') or service_analysis.get('warning') or 'Service check failed'}`")
+        service_error = service_analysis.get("error") or service_analysis.get("warning") or "Service \u68c0\u67e5\u5931\u8d25\u3002"
+        lines.append("- \u5224\u65ad\u7ed3\u679c: Service \u68c0\u67e5\u672a\u80fd\u5b8c\u6210\u3002")
+        lines.append(f"- \u9519\u8bef: `{service_error}`")
     else:
         matched = service_analysis.get("matched", []) or []
+        if matched:
+            lines.append("- \u5224\u65ad\u7ed3\u679c: Service selector \u53ef\u5339\u914d\u5f53\u524d Deployment \u7684 Pod \u6807\u7b7e\u3002")
+        else:
+            lines.append("- \u5224\u65ad\u7ed3\u679c: \u672a\u627e\u5230 selector \u80fd\u5339\u914d\u5f53\u524d Deployment Pod template labels \u7684 Service\u3002")
         if service_analysis.get("warning"):
-            lines.append(f"- Warning: {service_analysis['warning']}")
+            lines.append(f"- \u544a\u8b66: {service_analysis['warning']}")
         if not matched:
-            lines.append("_No matching Service found for the Deployment pod template labels._")
+            lines.append("_\u672a\u627e\u5230\u5339\u914d Deployment Pod template labels \u7684 Service\u3002_")
         else:
             lines.extend(
                 [
                     "",
-                    "| Service | Type | Selector | Ports |",
+                    "| Service | \u7c7b\u578b\uff08Type\uff09 | Selector | Ports |",
                     "| --- | --- | --- | --- |",
                 ]
             )
@@ -827,64 +943,64 @@ def build_report(
                     )
                 )
 
-    lines.extend(["", "## Secret / ConfigMap Check", ""])
+    lines.extend(["", "## Secret / ConfigMap \u68c0\u67e5", ""])
     if not config_checks:
-        lines.append("_No Secret or ConfigMap references found in Deployment env/envFrom._")
+        lines.append("_Deployment env / envFrom \u4e2d\u672a\u53d1\u73b0 Secret \u6216 ConfigMap \u5f15\u7528\u3002_")
     else:
-        lines.extend(["| Kind | Name | Status | Error |", "| --- | --- | --- | --- |"])
+        lines.extend(["| \u7c7b\u578b | \u540d\u79f0 | \u72b6\u6001\uff08Status\uff09 | \u9519\u8bef |", "| --- | --- | --- | --- |"])
         for item in config_checks:
             lines.append(
-                f"| {md_escape(item['kind'])} | {md_escape(item['name'])} | {md_escape(item['status'])} | {md_escape(item['error'] or '-')} |"
+                f"| {md_escape(item['kind'])} | {md_escape(item['name'])} | {md_escape(format_config_status(item['status']))} | {md_escape(item['error'] or '-')} |"
             )
 
-    lines.extend(["", "## Events Analysis", ""])
+    lines.extend(["", "## Events \u5206\u6790", ""])
     if not event_analyses:
-        lines.append("_No Pods required event analysis, or Pod data was unavailable._")
+        lines.append("_\u6ca1\u6709\u9700\u8981\u5206\u6790 Events \u7684 Pod\uff0c\u6216 Pod \u6570\u636e\u4e0d\u53ef\u7528\u3002_")
     else:
         for analysis in event_analyses:
             lines.extend(["", f"### Pod `{analysis['pod']}`", ""])
-            lines.append(f"- Command: `{analysis['command']}`")
+            lines.append(f"- \u547d\u4ee4: `{analysis['command']}`")
             if health_level in {HEALTHY, WARNING}:
-                lines.append("- Classification: `Historical warning check`")
+                lines.append("- \u5206\u7c7b: `\u5386\u53f2\u544a\u8b66\uff08Historical Warning\uff09`")
             else:
-                lines.append("- Classification: `Current failure investigation`")
+                lines.append("- \u5206\u7c7b: `\u5f53\u524d\u6545\u969c\u5206\u6790\uff08Current Failure Investigation\uff09`")
             if not analysis["ok"]:
-                lines.append(f"- Error: `{analysis['error']}`")
+                lines.append(f"- \u9519\u8bef: `{analysis['error']}`")
                 continue
             error_lines = analysis.get("error_lines", [])
             if error_lines:
-                lines.append("- Matched error event lines:")
+                lines.append("- \u547d\u4e2d\u7684 Events \u9519\u8bef\u884c:")
                 for event_line in error_lines:
                     lines.append(f"  - `{event_line.strip()}`")
             else:
-                lines.append("- No known error keywords found in Events.")
+                lines.append("- Events \u4e2d\u672a\u547d\u4e2d\u5df2\u77e5\u9519\u8bef\u5173\u952e\u8bcd\u3002")
 
     historical_warnings = collect_event_warning_lines(event_analyses) if health_level in {HEALTHY, WARNING} else []
     if historical_warnings:
-        lines.extend(["", "### Historical Event Warnings", ""])
-        lines.append("_These event lines are historical warnings, not current root causes._")
-        lines.extend(["", "| Pod | Event Line |", "| --- | --- |"])
+        lines.extend(["", "## \u5386\u53f2\u544a\u8b66", ""])
+        lines.append("_\u4ee5\u4e0b Events \u5c5e\u4e8e\u5386\u53f2\u544a\u8b66\uff0c\u4e0d\u4f5c\u4e3a\u5f53\u524d\u6545\u969c\u6839\u56e0\u3002_")
+        lines.extend(["", "| Pod | Events \u884c |", "| --- | --- |"])
         for pod_name, event_line in historical_warnings:
             lines.append(f"| {md_escape(pod_name)} | {md_escape(event_line)} |")
 
-    lines.extend(["", "## Recent Logs", ""])
+    lines.extend(["", "## \u6700\u8fd1\u65e5\u5fd7", ""])
     if not recent_logs:
-        lines.append("_No abnormal Pods found, so recent logs were not collected._")
+        lines.append("_\u672a\u53d1\u73b0\u5f02\u5e38 Pod\uff0c\u56e0\u6b64\u672a\u91c7\u96c6\u6700\u8fd1\u65e5\u5fd7\u3002_")
     else:
         for item in recent_logs:
             lines.extend(["", f"### Pod `{item['pod']}`", ""])
-            lines.append(f"- Command: `{item['command']}`")
+            lines.append(f"- \u547d\u4ee4: `{item['command']}`")
             if item["ok"]:
                 log_text = item.get("log") or "<empty log output>"
                 lines.extend(["", "```text", log_text, "```"])
             else:
-                lines.append(f"- Error: `{item['error']}`")
+                lines.append(f"- \u9519\u8bef: `{item['error']}`")
 
-    lines.extend(["", "## Possible Root Cause", ""])
+    lines.extend(["", "## \u53ef\u80fd\u6839\u56e0", ""])
     for cause in root_causes:
         lines.append(f"- {cause}")
 
-    lines.extend(["", "## Suggested Fix", ""])
+    lines.extend(["", "## \u5efa\u8bae\u4fee\u590d", ""])
     for fix in suggested_fixes:
         if "\n" in fix:
             lines.extend(["", fix])
@@ -912,17 +1028,17 @@ def collect_diagnostics(namespace: str, deployment_name: str, output_path: str) 
     if not preflight_ok:
         deployment_result = make_skipped_result(
             ["kubectl", "get", "deployment", deployment_name, "-n", namespace, "-o", "json"],
-            "Skipped because preflight checks failed.",
+            "\u56e0\u73af\u5883\u9884\u68c0\u5931\u8d25\uff0c\u8df3\u8fc7\u8be5\u547d\u4ee4\u3002",
         )
-        deployment_summary = {"error": "Skipped because kubectl preflight checks failed."}
-        pod_error = "Skipped Pod query because kubectl preflight checks failed."
+        deployment_summary = {"error": "\u56e0 kubectl \u73af\u5883\u9884\u68c0\u5931\u8d25\uff0c\u8df3\u8fc7 Deployment \u91c7\u96c6\u3002"}
+        pod_error = "\u56e0 kubectl \u73af\u5883\u9884\u68c0\u5931\u8d25\uff0c\u8df3\u8fc7 Pod \u67e5\u8be2\u3002"
         service_analysis = {
             "command": "kubectl get services -n {namespace} -o json".format(namespace=namespace),
             "ok": False,
-            "error": "Skipped because kubectl preflight checks failed.",
+            "error": "\u56e0 kubectl \u73af\u5883\u9884\u68c0\u5931\u8d25\uff0c\u8df3\u8fc7 Service \u68c0\u67e5\u3002",
             "matched": [],
             "unmatched": [],
-            "warning": "Service check skipped because kubectl preflight checks failed.",
+            "warning": "\u56e0 kubectl \u73af\u5883\u9884\u68c0\u5931\u8d25\uff0cService \u68c0\u67e5\u5df2\u8df3\u8fc7\u3002",
         }
         health_level = UNKNOWN
         event_analyses: List[Dict[str, Any]] = []
@@ -965,9 +1081,9 @@ def collect_diagnostics(namespace: str, deployment_name: str, output_path: str) 
             pod_result = run_kubectl(["get", "pods", "-n", namespace, "-l", selector, "-o", "json"])
             pods_data, pod_error = parse_json_result(pod_result)
         else:
-            pod_error = "Deployment spec.selector.matchLabels is empty or unavailable."
+            pod_error = "Deployment spec.selector.matchLabels \u4e3a\u7a7a\u6216\u4e0d\u53ef\u7528\u3002"
     else:
-        pod_error = "Skipped Pod query because Deployment data is unavailable."
+        pod_error = "\u56e0 Deployment \u6570\u636e\u4e0d\u53ef\u7528\uff0c\u8df3\u8fc7 Pod \u67e5\u8be2\u3002"
 
     pod_summaries, parsed_pod_error = get_pod_summaries(pods_data, pod_error)
     config_refs = extract_config_refs(deployment_data)
@@ -1017,6 +1133,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--deployment", required=True, help="Deployment name, for example: devops-cicd-demo")
     parser.add_argument(
         "--output",
+        type=str,
         default=None,
         help="Markdown report path. Default: reports/release-doctor-<namespace>-<deployment>.md",
     )
@@ -1035,7 +1152,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with open(output_path, "w", encoding="utf-8") as report_file:
             report_file.write(report)
     except OSError as exc:
-        print(f"\nFailed to write report to {output_path}: {exc}", file=sys.stderr)
+        print(f"\n\u5199\u5165\u62a5\u544a\u5931\u8d25 {output_path}: {exc}", file=sys.stderr)
         return 1
 
     print(f"Report saved to: {output_path}", file=sys.stderr)
