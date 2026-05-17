@@ -900,7 +900,8 @@ def build_report(
     lines.extend(["", "## Service \u68c0\u67e5", ""])
     lines.append(f"- \u547d\u4ee4: `{service_analysis.get('command', 'N/A')}`")
     if not service_analysis.get("ok"):
-        lines.append(f"- \u9519\u8bef: `{service_analysis.get('error') or service_analysis.get('warning') or 'Service \u68c0\u67e5\u5931\u8d25\u3002'}`")
+        service_error = service_analysis.get("error") or service_analysis.get("warning") or "Service \u68c0\u67e5\u5931\u8d25\u3002"
+        lines.append(f"- \u9519\u8bef: `{service_error}`")
     else:
         matched = service_analysis.get("matched", []) or []
         if service_analysis.get("warning"):
