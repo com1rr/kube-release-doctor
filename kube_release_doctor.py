@@ -38,10 +38,17 @@ EVENT_ERROR_KEYWORDS = [
     "Warning",
 ]
 
-HEALTHY = "健康"
-WARNING = "警告"
-CRITICAL = "严重"
-UNKNOWN = "未知"
+HEALTHY = "Healthy"
+WARNING = "Warning"
+CRITICAL = "Critical"
+UNKNOWN = "Unknown"
+
+HEALTH_LEVEL_LABELS = {
+    HEALTHY: "\u5065\u5eb7\uff08Healthy\uff09",
+    WARNING: "\u8b66\u544a\uff08Warning\uff09",
+    CRITICAL: "\u4e25\u91cd\uff08Critical\uff09",
+    UNKNOWN: "\u672a\u77e5\uff08Unknown\uff09",
+}
 
 
 @dataclass
@@ -434,6 +441,51 @@ def has_restart_warnings(pod_summaries: List[Dict[str, Any]]) -> bool:
     return any(pod.get("warnings") for pod in pod_summaries)
 
 
+def format_health_level(health_level: str) -> str:
+    return HEALTH_LEVEL_LABELS.get(health_level, f"{health_level}\uff08{health_level}\uff09")
+
+
+def describe_current_status(
+    health_level: str,
+    pod_summaries: List[Dict[str, Any]],
+    event_analyses: List[Dict[str, Any]],
+    service_analysis: Dict[str, Any],
+) -> List[str]:
+    historical_events = any(analysis.get("error_lines") for analysis in event_analyses)
+    restart_warnings = has_restart_warnings(pod_summaries)
+    service_warning = bool(service_analysis.get("warning"))
+
+    if health_level == HEALTHY:
+        return [
+            "\u5f53\u524d\u8d44\u6e90\u5b8c\u5168\u6b63\u5e38\uff0c\u672a\u53d1\u73b0\u660e\u663e\u5386\u53f2\u544a\u8b66\u3002",
+            "Current resources are healthy and no obvious historical warnings were found.",
+        ]
+
+    if health_level == WARNING:
+        messages = [
+            "\u5f53\u524d\u53d1\u5e03\u8d44\u6e90\u662f\u5065\u5eb7\u7684\uff0c\u4f46\u5b58\u5728\u9700\u8981\u5173\u6ce8\u7684\u544a\u8b66\u4fe1\u53f7\u3002",
+            "Current release is healthy, but warning signals were found.",
+        ]
+        if historical_events:
+            messages.append("Current release is healthy, but historical warning events were found.")
+        if restart_warnings:
+            messages.append("One or more containers have restartCount > 0, but they are currently Ready.")
+        if service_warning:
+            messages.append(str(service_analysis["warning"]))
+        return unique_preserve_order(messages)
+
+    if health_level == CRITICAL:
+        return [
+            "\u68c0\u6d4b\u5230\u660e\u786e\u7684\u5f53\u524d\u53d1\u5e03\u6545\u969c\u3002",
+            "Current release failure detected. Check rollout status, Pod state, image pull status, and Secret/ConfigMap references.",
+        ]
+
+    return [
+        "\u65e0\u6cd5\u5224\u65ad\u5f53\u524d\u53d1\u5e03\u72b6\u6001\uff0c\u901a\u5e38\u662f\u56e0\u4e3a kubectl \u4e0d\u53ef\u7528\u3001\u96c6\u7fa4\u4e0d\u53ef\u8fbe\u3001\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u6743\u9650\u4e0d\u8db3\u3002",
+        "Unable to determine release health because kubectl access or required resources are unavailable.",
+    ]
+
+
 def evaluate_health_level(
     preflight_ok: bool,
     deployment_summary: Dict[str, Any],
@@ -729,15 +781,9 @@ def build_report(
         )
 
     lines.extend(["", "## Current Status", ""])
-    lines.append(f"- 健康等级: `{health_level}`")
-    if health_level == HEALTHY:
-        lines.append("- Current resources are healthy.")
-    elif health_level == WARNING:
-        lines.append("- Current core resources are healthy, but warnings require review.")
-    elif health_level == CRITICAL:
-        lines.append("- Current release failure signals were detected.")
-    else:
-        lines.append("- Health could not be determined because kubectl access or required resources are unavailable.")
+    lines.append(f"- \u6574\u4f53\u72b6\u6001\uff1a{format_health_level(health_level)}")
+    for message in describe_current_status(health_level, pod_summaries, event_analyses, service_analysis):
+        lines.append(f"- {message}")
 
     lines.extend(["", "## Deployment Status", ""])
     if deployment_summary.get("error"):
