@@ -185,13 +185,14 @@ def analyze_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
     init_container_statuses = status.get("initContainerStatuses", []) or []
 
     problems: List[str] = []
+    warnings: List[str] = []
     containers: List[Dict[str, Any]] = []
 
     if phase == "Pending":
         problems.append("Pending")
 
-    all_statuses = list(init_container_statuses) + list(container_statuses)
-    for item in all_statuses:
+    all_statuses = [(item, True) for item in init_container_statuses] + [(item, False) for item in container_statuses]
+    for item, is_init in all_statuses:
         state = item.get("state") or {}
         waiting = state.get("waiting") or {}
         waiting_reason = waiting.get("reason") or ""
@@ -203,7 +204,10 @@ def analyze_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
         if waiting_reason == "ContainerCreating":
             problems.append("ContainerCreating")
         if restart_count and restart_count > 0:
-            problems.append(f"RestartCount={restart_count}")
+            if ready:
+                warnings.append(f"RestartCount={restart_count}, container currently ready")
+            else:
+                problems.append(f"RestartCount={restart_count}, container not ready")
 
         containers.append(
             {
@@ -212,6 +216,7 @@ def analyze_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
                 "restartCount": restart_count,
                 "waitingReason": waiting_reason,
                 "waitingMessage": waiting.get("message", ""),
+                "isInit": is_init,
             }
         )
 
@@ -220,6 +225,7 @@ def analyze_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
         "phase": phase,
         "containers": containers,
         "problems": sorted(set(problems)),
+        "warnings": sorted(set(warnings)),
         "is_abnormal": bool(problems),
     }
 
@@ -251,10 +257,52 @@ def extract_error_event_lines(events_text: str) -> List[str]:
     return matches
 
 
-def analyze_events(namespace: str, pod_summaries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def is_currently_healthy(
+    deployment_summary: Dict[str, Any],
+    pod_summaries: List[Dict[str, Any]],
+    pod_error: Optional[str],
+    config_checks: List[Dict[str, str]],
+) -> bool:
+    if deployment_summary.get("error") or pod_error:
+        return False
+
+    replicas = deployment_summary.get("replicas")
+    available = deployment_summary.get("availableReplicas")
+    if not isinstance(replicas, int) or not isinstance(available, int):
+        return False
+    if available != replicas:
+        return False
+
+    if replicas > 0 and not pod_summaries:
+        return False
+
+    if any(item["status"] != "Found" for item in config_checks):
+        return False
+
+    for pod in pod_summaries:
+        if pod.get("phase") != "Running":
+            return False
+        for container in pod.get("containers", []) or []:
+            if container.get("isInit"):
+                continue
+            if container.get("ready") is not True:
+                return False
+
+    return True
+
+
+def collect_event_warning_lines(event_analyses: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    warnings: List[Tuple[str, str]] = []
+    for analysis in event_analyses:
+        for line in analysis.get("error_lines", []):
+            warnings.append((analysis["pod"], line.strip()))
+    return warnings
+
+
+def analyze_events(namespace: str, pod_summaries: List[Dict[str, Any]], include_healthy_pods: bool = False) -> List[Dict[str, Any]]:
     analyses: List[Dict[str, Any]] = []
     for pod in pod_summaries:
-        if not pod.get("is_abnormal"):
+        if not include_healthy_pods and not pod.get("is_abnormal"):
             continue
         result = run_kubectl(["describe", "pod", pod["name"], "-n", namespace], timeout=45)
         events_text = extract_events_section(result.stdout) if result.ok else ""
@@ -276,8 +324,19 @@ def infer_root_causes(
     pod_summaries: List[Dict[str, Any]],
     config_checks: List[Dict[str, str]],
     event_analyses: List[Dict[str, Any]],
+    current_healthy: bool,
 ) -> List[str]:
     causes: List[str] = []
+
+    if current_healthy:
+        historical_warnings_found = any(analysis.get("error_lines") for analysis in event_analyses)
+        if historical_warnings_found:
+            causes.append(
+                "No current release failure detected. Historical warning events were found, but current resources are healthy."
+            )
+        else:
+            causes.append("No current release failure detected. Current resources are healthy.")
+        return causes
 
     if deployment_summary.get("error"):
         causes.append("Deployment information could not be collected. Check namespace, deployment name, and kubectl access.")
@@ -326,7 +385,12 @@ def infer_root_causes(
     return unique_preserve_order(causes)
 
 
-def suggest_fixes(root_causes: List[str], config_checks: List[Dict[str, str]]) -> List[str]:
+def suggest_fixes(root_causes: List[str], config_checks: List[Dict[str, str]], current_healthy: bool) -> List[str]:
+    if current_healthy:
+        return [
+            "No immediate fix required. Historical warnings can be reviewed with kubectl describe pod if needed."
+        ]
+
     fixes: List[str] = []
     text = "\n".join(root_causes)
 
@@ -392,6 +456,7 @@ def build_report(
     pod_error: Optional[str],
     config_checks: List[Dict[str, str]],
     event_analyses: List[Dict[str, Any]],
+    current_healthy: bool,
     root_causes: List[str],
     suggested_fixes: List[str],
 ) -> str:
@@ -418,6 +483,14 @@ def build_report(
     if pod_result and not pod_result.ok:
         lines.extend(["", f"> Pod command failed: `{pod_result.stderr or 'unknown error'}`"])
 
+    lines.extend(["", "## Current Status", ""])
+    if current_healthy:
+        lines.append("- Overall Status: `Healthy`")
+        lines.append("- Current resources are healthy. Event warning keywords, if present, are treated as historical warnings.")
+    else:
+        lines.append("- Overall Status: `Unhealthy or Unknown`")
+        lines.append("- One or more current resource checks failed, are unavailable, or could not be confirmed healthy.")
+
     lines.extend(["", "## Deployment Status", ""])
     if deployment_summary.get("error"):
         lines.append(f"- Error: `{deployment_summary['error']}`")
@@ -442,19 +515,28 @@ def build_report(
     elif not pod_summaries:
         lines.append("_No Pods found for the Deployment selector._")
     else:
-        lines.extend(["| Pod | Phase | Container | Ready | Restarts | Waiting Reason | Problems |", "| --- | --- | --- | --- | --- | --- | --- |"])
+        lines.extend(
+            [
+                "| Pod | Phase | Container | Ready | Restarts | Waiting Reason | Problems | Warnings |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
         for pod in pod_summaries:
-            containers = pod.get("containers", []) or [{"name": "", "ready": "", "restartCount": "", "waitingReason": ""}]
+            containers = pod.get("containers", []) or [{"name": "", "ready": "", "restartCount": "", "waitingReason": "", "isInit": False}]
             for container in containers:
+                container_name = container.get("name", "")
+                if container.get("isInit"):
+                    container_name = f"init:{container_name}"
                 lines.append(
-                    "| {pod} | {phase} | {container} | {ready} | {restarts} | {reason} | {problems} |".format(
+                    "| {pod} | {phase} | {container} | {ready} | {restarts} | {reason} | {problems} | {warnings} |".format(
                         pod=md_escape(pod["name"]),
                         phase=md_escape(pod["phase"]),
-                        container=md_escape(container.get("name", "")),
+                        container=md_escape(container_name),
                         ready=md_escape(container.get("ready", "")),
                         restarts=md_escape(container.get("restartCount", "")),
                         reason=md_escape(container.get("waitingReason", "")),
                         problems=md_escape(", ".join(pod.get("problems", [])) or "-"),
+                        warnings=md_escape(", ".join(pod.get("warnings", [])) or "-"),
                     )
                 )
 
@@ -470,11 +552,15 @@ def build_report(
 
     lines.extend(["", "## Events Analysis", ""])
     if not event_analyses:
-        lines.append("_No abnormal Pods found, so pod describe events were not collected._")
+        lines.append("_No Pods required event analysis, or Pod data was unavailable._")
     else:
         for analysis in event_analyses:
             lines.extend(["", f"### Pod `{analysis['pod']}`", ""])
             lines.append(f"- Command: `{analysis['command']}`")
+            if current_healthy:
+                lines.append("- Classification: `Historical warning check`")
+            else:
+                lines.append("- Classification: `Current failure investigation`")
             if not analysis["ok"]:
                 lines.append(f"- Error: `{analysis['error']}`")
                 continue
@@ -485,6 +571,17 @@ def build_report(
                     lines.append(f"  - `{event_line.strip()}`")
             else:
                 lines.append("- No known error keywords found in Events.")
+
+    historical_warnings = collect_event_warning_lines(event_analyses) if current_healthy else []
+    if current_healthy:
+        lines.extend(["", "## Historical Warnings", ""])
+        if historical_warnings:
+            lines.append("_These warning events were found in pod history, but current Deployment, Pods, and config references are healthy._")
+            lines.extend(["", "| Pod | Event Line |", "| --- | --- |"])
+            for pod_name, event_line in historical_warnings:
+                lines.append(f"| {md_escape(pod_name)} | {md_escape(event_line)} |")
+        else:
+            lines.append("_No historical warning event lines matched known error keywords._")
 
     lines.extend(["", "## Possible Root Cause", ""])
     for cause in root_causes:
@@ -533,9 +630,10 @@ def collect_diagnostics(namespace: str, deployment_name: str, output_path: str) 
     pod_summaries, parsed_pod_error = get_pod_summaries(pods_data, pod_error)
     config_refs = extract_config_refs(deployment_data)
     config_checks = check_config_refs(namespace, config_refs)
-    event_analyses = analyze_events(namespace, pod_summaries)
-    root_causes = infer_root_causes(deployment_summary, pod_summaries, config_checks, event_analyses)
-    suggested_fixes = suggest_fixes(root_causes, config_checks)
+    current_healthy = is_currently_healthy(deployment_summary, pod_summaries, parsed_pod_error, config_checks)
+    event_analyses = analyze_events(namespace, pod_summaries, include_healthy_pods=current_healthy)
+    root_causes = infer_root_causes(deployment_summary, pod_summaries, config_checks, event_analyses, current_healthy)
+    suggested_fixes = suggest_fixes(root_causes, config_checks, current_healthy)
 
     return build_report(
         namespace=namespace,
@@ -549,6 +647,7 @@ def collect_diagnostics(namespace: str, deployment_name: str, output_path: str) 
         pod_error=parsed_pod_error,
         config_checks=config_checks,
         event_analyses=event_analyses,
+        current_healthy=current_healthy,
         root_causes=root_causes,
         suggested_fixes=suggested_fixes,
     )
