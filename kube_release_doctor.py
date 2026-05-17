@@ -760,7 +760,8 @@ def build_diagnosis_summary(
     abnormal_pods = [pod for pod in pod_summaries if pod.get("is_abnormal")]
     restart_warning_count = sum(1 for pod in pod_summaries if pod.get("warnings"))
     missing_refs = [item for item in config_checks if item["status"] != "Found"]
-    historical_warning_count = sum(len(analysis.get("error_lines", [])) for analysis in event_analyses)
+    event_error_count = sum(len(analysis.get("error_lines", [])) for analysis in event_analyses)
+    event_error_label = "\u5386\u53f2\u544a\u8b66 Events \u6570" if health_level in {HEALTHY, WARNING} else "\u5f53\u524d\u6545\u969c Events \u6570"
     matched_services = service_analysis.get("matched", []) or []
 
     lines = [
@@ -771,7 +772,7 @@ def build_diagnosis_summary(
         f"- Pod \u603b\u6570: `{len(pod_summaries)}`\uff0c\u5f02\u5e38 Pod: `{len(abnormal_pods)}`",
         f"- Service \u5339\u914d\u6570: `{len(matched_services)}`",
         f"- Secret / ConfigMap \u7f3a\u5931\u6570: `{len(missing_refs)}`",
-        f"- \u5386\u53f2\u544a\u8b66 Events \u6570: `{historical_warning_count}`",
+        f"- {event_error_label}: `{event_error_count}`",
         f"- RestartCount \u544a\u8b66 Pod \u6570: `{restart_warning_count}`",
         f"- \u5df2\u91c7\u96c6\u6700\u8fd1\u65e5\u5fd7 Pod \u6570: `{len(recent_logs)}`",
     ]
