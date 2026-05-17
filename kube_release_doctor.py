@@ -1133,6 +1133,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--deployment", required=True, help="Deployment name, for example: devops-cicd-demo")
     parser.add_argument(
         "--output",
+        type=str,
         default=None,
         help="Markdown report path. Default: reports/release-doctor-<namespace>-<deployment>.md",
     )
