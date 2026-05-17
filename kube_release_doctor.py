@@ -774,7 +774,7 @@ def build_diagnosis_summary(
         f"- Secret / ConfigMap \u7f3a\u5931\u6570: `{len(missing_refs)}`",
         f"- {event_error_label}: `{event_error_count}`",
         f"- RestartCount \u544a\u8b66 Pod \u6570: `{restart_warning_count}`",
-        f"- \u5df2\u91c7\u96c6\u6700\u8fd1\u65e5\u5fd7 Pod \u6570: `{len(recent_logs)}`",
+        f"- \u5df2\u5c1d\u8bd5\u91c7\u96c6\u6700\u8fd1\u65e5\u5fd7 Pod \u6570: `{len(recent_logs)}`",
     ]
     return lines
 
@@ -902,9 +902,14 @@ def build_report(
     lines.append(f"- \u547d\u4ee4: `{service_analysis.get('command', 'N/A')}`")
     if not service_analysis.get("ok"):
         service_error = service_analysis.get("error") or service_analysis.get("warning") or "Service \u68c0\u67e5\u5931\u8d25\u3002"
+        lines.append("- \u5224\u65ad\u7ed3\u679c: Service \u68c0\u67e5\u672a\u80fd\u5b8c\u6210\u3002")
         lines.append(f"- \u9519\u8bef: `{service_error}`")
     else:
         matched = service_analysis.get("matched", []) or []
+        if matched:
+            lines.append("- \u5224\u65ad\u7ed3\u679c: Service selector \u53ef\u5339\u914d\u5f53\u524d Deployment \u7684 Pod \u6807\u7b7e\u3002")
+        else:
+            lines.append("- \u5224\u65ad\u7ed3\u679c: \u672a\u627e\u5230 selector \u80fd\u5339\u914d\u5f53\u524d Deployment Pod template labels \u7684 Service\u3002")
         if service_analysis.get("warning"):
             lines.append(f"- \u544a\u8b66: {service_analysis['warning']}")
         if not matched:
